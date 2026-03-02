@@ -33,6 +33,7 @@ interface LanternConfig {
   vy: number
   scale: number
   wobble: number
+  wobblePhase: number
   flickerBase: number
   flickerSpeed: number
   flickerState: number
@@ -41,6 +42,9 @@ interface LanternConfig {
   state: LanternState
   targetHeight: number
   speedConfig: SpeedConfig
+  hue: number
+  swayOffset: number
+  flameHeight: number
 }
 
 interface Props {
@@ -154,28 +158,33 @@ class Lantern {
   config: LanternConfig
 
   constructor(isReleased: boolean, canvasWidth: number, canvasHeight: number) {
-    const baseWidth = Math.random() * 30 + 20
+    const baseWidth = Math.random() * 25 + 22
     const speedConfig = getSpeedConfig()
+    const hueVariation = Math.random() * 30 - 15 // -15 to 15 hue variation
 
     this.config = {
       baseWidth,
-      baseHeight: baseWidth * 1.8,
+      baseHeight: baseWidth * 1.6,
       x: Math.random() * canvasWidth,
       y: isReleased
         ? canvasHeight + 50
         : canvasHeight + baseWidth * 1.8 * 0.4 + Math.random() * 20,
-      vx: (Math.random() - 0.5) * 0.25,
+      vx: (Math.random() - 0.5) * 0.2,
       vy: 0,
-      scale: isReleased ? 1 : Math.random() * 0.2 + 0.85,
+      scale: isReleased ? 1 : Math.random() * 0.15 + 0.88,
       wobble: Math.random() * Math.PI * 2,
-      flickerBase: Math.random() > 0.5 ? 240 : 210,
-      flickerSpeed: Math.random() * 0.08 + 0.04,
+      wobblePhase: Math.random() * Math.PI * 2,
+      flickerBase: Math.random() > 0.5 ? 245 : 220,
+      flickerSpeed: Math.random() * 0.06 + 0.03,
       flickerState: Math.random() * Math.PI * 2,
-      candleIntensity: Math.random() * 0.3 + 0.7,
-      text: baseWidth > 22 ? randomBlessing() : '',
+      candleIntensity: Math.random() * 0.25 + 0.75,
+      text: baseWidth > 24 ? randomBlessing() : '',
       state: isReleased ? 'rising' : 'grounded',
       targetHeight: canvasHeight * (0.08 + Math.random() * 0.15),
       speedConfig,
+      hue: 45 + hueVariation, // Orange-yellow base with variation
+      swayOffset: Math.random() * 100,
+      flameHeight: Math.random() * 0.3 + 0.85,
     }
 
     if (isReleased) this.launch(canvasHeight)
@@ -198,17 +207,21 @@ class Lantern {
     const { wobbleAmp, floatSpeed } = cfg.speedConfig
 
     cfg.wobble += cfg.speedConfig.wobbleSpeed
+    cfg.wobblePhase += cfg.speedConfig.wobbleSpeed * 0.7
     cfg.flickerState += cfg.flickerSpeed
 
     switch (cfg.state) {
       case 'grounded':
-        cfg.x += cfg.vx + Math.sin(cfg.wobble) * 0.08
+        cfg.x += cfg.vx + Math.sin(cfg.wobble) * 0.06
         cfg.y =
-          canvasHeight + cfg.baseHeight * 0.4 + Math.sin(cfg.wobble * 0.6) * 4
+          canvasHeight + cfg.baseHeight * 0.4 + Math.sin(cfg.wobble * 0.5) * 3
         break
 
       case 'rising':
-        cfg.x += (cfg.vx + Math.sin(cfg.wobble) * wobbleAmp) * cfg.scale
+        // More natural swaying motion combining multiple sine waves
+        const sway = Math.sin(cfg.wobble) * wobbleAmp + 
+                     Math.sin(cfg.wobble * 0.5 + cfg.swayOffset) * (wobbleAmp * 0.3)
+        cfg.x += (cfg.vx + sway) * cfg.scale
         cfg.y += cfg.vy * cfg.scale
         cfg.scale -= cfg.speedConfig.scaleDecay
         if (
@@ -221,80 +234,217 @@ class Lantern {
 
       case 'gathered':
         cfg.scale =
-          cfg.scale > 0.05 ? cfg.scale - 0.0008 * props.shrinkMultiplier : 0.05
-        cfg.x += Math.sin(cfg.wobble) * floatSpeed * cfg.scale
-        cfg.y += Math.cos(cfg.wobble * 0.7) * floatSpeed * cfg.scale
+          cfg.scale > 0.05 ? cfg.scale - 0.0006 * props.shrinkMultiplier : 0.05
+        cfg.x += Math.sin(cfg.wobble) * floatSpeed * cfg.scale * 0.8
+        cfg.y += Math.cos(cfg.wobble * 0.6) * floatSpeed * cfg.scale * 0.6
         break
     }
   }
 
   draw(context: CanvasRenderingContext2D) {
     const cfg = this.config
-    if (cfg.scale <= 0.01 || cfg.y < -100) return
+    if (cfg.scale <= 0.01 || cfg.y < -150) return
 
-    const fVal = cfg.flickerBase + Math.sin(cfg.flickerState) * 35
+    const fVal = cfg.flickerBase + Math.sin(cfg.flickerState) * 30
     const r = 255
-    const g = Math.min(255, fVal + 8)
-    const b = Math.max(0, fVal - 90)
+    const g = Math.min(255, fVal + 5)
+    const b = Math.max(0, fVal - 80)
     const cRgb = `${r},${g},${b}`
+    
+    const w = cfg.baseWidth
+    const h = cfg.baseHeight
+    const halfW = w / 2
+    const halfH = h / 2
 
     context.save()
     context.translate(cfg.x, cfg.y)
     context.scale(cfg.scale, cfg.scale)
+    
+    // Apply slight rotation based on sway for more natural movement
+    const rotation = Math.sin(cfg.wobblePhase) * 0.05
+    context.rotate(rotation)
 
-    // 灯身
-    const grad = context.createRadialGradient(
-      0,
-      cfg.baseHeight * 0.35,
-      0,
-      0,
-      0,
-      cfg.baseHeight * 0.85,
-    )
-    grad.addColorStop(0, `rgba(255,255,220,${0.9 * cfg.candleIntensity})`)
-    grad.addColorStop(0.5, `rgba(${cRgb},${0.8 * cfg.candleIntensity})`)
-    grad.addColorStop(1, `rgba(${r},${g},50,0)`)
-
-    context.fillStyle = grad
+    // ===== 绘制孔明灯主体（梨形/椭圆造型） =====
+    
+    // 1. 外部纸质发光层（柔光效果）
+    const outerGlow = context.createRadialGradient(0, 0, 0, 0, 0, halfH * 1.2)
+    outerGlow.addColorStop(0, `rgba(${cRgb}, 0.15)`)
+    outerGlow.addColorStop(0.6, `rgba(${cRgb}, 0.05)`)
+    outerGlow.addColorStop(1, 'rgba(255, 100, 0, 0)')
+    
+    context.fillStyle = outerGlow
     context.beginPath()
-    context.moveTo(-cfg.baseWidth / 2, -cfg.baseHeight * 0.45)
-    context.lineTo(cfg.baseWidth / 2, -cfg.baseHeight * 0.45)
-    context.lineTo(cfg.baseWidth * 0.4, cfg.baseHeight / 2)
-    context.lineTo(-cfg.baseWidth * 0.4, cfg.baseHeight / 2)
-    context.closePath()
+    context.ellipse(0, 0, halfW * 1.3, halfH * 1.25, 0, 0, Math.PI * 2)
     context.fill()
 
-    // 祝福文字（仅上升阶段且缩放足够大时显示）
-    if (cfg.text && cfg.scale > 0.15 && cfg.state === 'rising') {
-      const fs = Math.min(
-        cfg.baseWidth * 0.35,
-        (cfg.baseHeight * 0.7) / cfg.text.length,
-      )
-      context.font = `bold ${fs}px "KaiTi","STKaiti","Microsoft YaHei",sans-serif`
-      context.fillStyle = 'rgba(30,15,0,0.8)'
+    // 2. 主体形状 - 梨形孔明灯
+    context.beginPath()
+    // 顶部圆弧
+    context.arc(0, -halfH * 0.3, halfW * 0.85, Math.PI * 0.15, Math.PI * 0.85, true)
+    // 两侧曲线
+    context.bezierCurveTo(
+      halfW * 0.9, halfH * 0.2,
+      halfW * 0.7, halfH * 0.7,
+      halfW * 0.5, halfH * 0.9
+    )
+    // 底部圆弧
+    context.arc(0, halfH * 0.9, halfW * 0.5, 0, Math.PI, true)
+    // 左侧曲线
+    context.bezierCurveTo(
+      -halfW * 0.7, halfH * 0.7,
+      -halfW * 0.9, halfH * 0.2,
+      -halfW * 0.85, -halfH * 0.47
+    )
+    context.closePath()
+
+    // 3. 主体渐变填充（模拟纸质透光效果）
+    const bodyGrad = context.createRadialGradient(
+      0, -halfH * 0.1,
+      0,
+      0, halfH * 0.3,
+      halfH
+    )
+    const alpha = 0.75 * cfg.candleIntensity
+    bodyGrad.addColorStop(0, `rgba(255, 248, 220, ${alpha})`)
+    bodyGrad.addColorStop(0.3, `rgba(${cRgb}, ${alpha * 0.9})`)
+    bodyGrad.addColorStop(0.7, `rgba(${r * 0.9},${g * 0.7},${b * 0.3}, ${alpha * 0.7})`)
+    bodyGrad.addColorStop(1, `rgba(${r * 0.7},${g * 0.4},30, ${alpha * 0.5})`)
+    
+    context.fillStyle = bodyGrad
+    context.fill()
+
+    // 4. 骨架线条（模拟竹骨结构）
+    context.strokeStyle = `rgba(80, 40, 20, 0.25)`
+    context.lineWidth = 0.8
+    
+    // 垂直骨架
+    context.beginPath()
+    context.moveTo(0, -halfH * 0.75)
+    context.quadraticCurveTo(0, 0, 0, halfH * 0.85)
+    context.stroke()
+    
+    // 横向骨架（弧度）
+    for (let i = 0; i < 3; i++) {
+      const yPos = -halfH * 0.3 + i * halfH * 0.4
+      const wAtY = halfW * (0.6 + 0.25 * Math.sin((i + 1) * Math.PI / 4))
+      context.beginPath()
+      context.moveTo(-wAtY, yPos)
+      context.quadraticCurveTo(0, yPos + 5, wAtY, yPos)
+      context.stroke()
+    }
+
+    // 5. 内部光晕（烛光效果）
+    const flameGrad = context.createRadialGradient(
+      0, halfH * 0.5,
+      0,
+      0, halfH * 0.5,
+      halfW * 0.6
+    )
+    const flameAlpha = 0.6 + Math.sin(cfg.flickerState * 1.5) * 0.15
+    flameGrad.addColorStop(0, `rgba(255, 255, 200, ${flameAlpha})`)
+    flameGrad.addColorStop(0.4, `rgba(255, 200, 100, ${flameAlpha * 0.6})`)
+    flameGrad.addColorStop(1, 'rgba(255, 150, 50, 0)')
+    
+    context.fillStyle = flameGrad
+    context.beginPath()
+    context.ellipse(0, halfH * 0.5, halfW * 0.5, halfW * 0.35, 0, 0, Math.PI * 2)
+    context.fill()
+
+    // 6. 祝福文字（竖排，仅上升阶段且缩放足够大时显示）
+    if (cfg.text && cfg.scale > 0.18 && cfg.state === 'rising') {
+      const fs = Math.min(w * 0.28, (h * 0.6) / cfg.text.length)
+      context.font = `bold ${fs}px "KaiTi","STKaiti","Microsoft YaHei",serif`
+      context.fillStyle = 'rgba(40, 20, 5, 0.85)'
       context.textAlign = 'center'
       context.textBaseline = 'middle'
-      const lineHeight = fs * 1.05
+      context.shadowColor = 'rgba(255, 200, 100, 0.3)'
+      context.shadowBlur = 2
+      
+      const lineHeight = fs * 1.1
       const offsetY = -((cfg.text.length - 1) * lineHeight) / 2
+      
       for (let i = 0; i < cfg.text.length; i++) {
         context.fillText(cfg.text[i], 0, offsetY + i * lineHeight)
       }
+      
+      context.shadowBlur = 0
     }
 
-    // 底部光晕
+    // 7. 顶部装饰（金属环）
+    context.fillStyle = 'rgba(139, 90, 43, 0.8)'
     context.beginPath()
-    context.ellipse(
-      0,
-      cfg.baseHeight / 2,
-      cfg.baseWidth * 0.4,
-      cfg.baseWidth * 0.1,
-      0,
-      0,
-      Math.PI * 2,
+    context.ellipse(0, -halfH * 0.72, halfW * 0.12, halfW * 0.06, 0, 0, Math.PI * 2)
+    context.fill()
+
+    // 8. 底部开口和飘带
+    // 底部开口边缘
+    context.strokeStyle = `rgba(100, 60, 30, 0.5)`
+    context.lineWidth = 1.5
+    context.beginPath()
+    context.ellipse(0, halfH * 0.9, halfW * 0.5, halfW * 0.12, 0, 0, Math.PI * 2)
+    context.stroke()
+
+    // 飘带（随风摆动）
+    const ribbonSway = Math.sin(cfg.wobble * 1.2 + cfg.swayOffset) * 3
+    context.strokeStyle = `rgba(180, 80, 40, 0.7)`
+    context.lineWidth = 1.2
+    context.lineCap = 'round'
+    
+    // 左飘带
+    context.beginPath()
+    context.moveTo(-halfW * 0.3, halfH * 0.95)
+    context.quadraticCurveTo(
+      -halfW * 0.3 + ribbonSway, halfH * 1.1,
+      -halfW * 0.3 - ribbonSway * 0.5, halfH * 1.25
     )
-    context.fillStyle = `rgba(${cRgb},0.9)`
-    context.shadowBlur = 25
-    context.shadowColor = 'rgba(255,170,40,0.8)'
+    context.stroke()
+    
+    // 右飘带
+    context.beginPath()
+    context.moveTo(halfW * 0.3, halfH * 0.95)
+    context.quadraticCurveTo(
+      halfW * 0.3 + ribbonSway, halfH * 1.1,
+      halfW * 0.3 + ribbonSway * 0.5, halfH * 1.25
+    )
+    context.stroke()
+    
+    // 飘带末端小球
+    context.fillStyle = 'rgba(200, 100, 50, 0.8)'
+    context.beginPath()
+    context.arc(-halfW * 0.3 - ribbonSway * 0.5, halfH * 1.25, 1.5, 0, Math.PI * 2)
+    context.arc(halfW * 0.3 + ribbonSway * 0.5, halfH * 1.25, 1.5, 0, Math.PI * 2)
+    context.fill()
+
+    // 9. 底部光晕（照亮效果）
+    const bottomGlow = context.createRadialGradient(
+      0, halfH * 0.9,
+      0,
+      0, halfH * 0.9,
+      halfW * 0.8
+    )
+    bottomGlow.addColorStop(0, `rgba(${cRgb}, 0.6)`)
+    bottomGlow.addColorStop(0.5, `rgba(255, 150, 50, 0.2)`)
+    bottomGlow.addColorStop(1, 'rgba(255, 100, 0, 0)')
+    
+    context.fillStyle = bottomGlow
+    context.beginPath()
+    context.ellipse(0, halfH * 0.9, halfW * 0.8, halfW * 0.25, 0, 0, Math.PI * 2)
+    context.fill()
+
+    // 10. 顶部高光（增强立体感）
+    const highlightGrad = context.createRadialGradient(
+      -halfW * 0.3, -halfH * 0.5,
+      0,
+      -halfW * 0.3, -halfH * 0.5,
+      halfW * 0.4
+    )
+    highlightGrad.addColorStop(0, 'rgba(255, 255, 255, 0.25)')
+    highlightGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.08)')
+    highlightGrad.addColorStop(1, 'rgba(255, 255, 255, 0)')
+    
+    context.fillStyle = highlightGrad
+    context.beginPath()
+    context.ellipse(-halfW * 0.3, -halfH * 0.5, halfW * 0.25, halfH * 0.2, -0.3, 0, Math.PI * 2)
     context.fill()
 
     context.restore()
@@ -360,7 +510,7 @@ const animate = () => {
   lanterns.value = lanterns.value.filter((lantern) => {
     lantern.update(width.value, height.value)
     lantern.draw(context)
-    return lantern.config.scale > 0.01 && lantern.config.y > -150
+    return lantern.config.scale > 0.01 && lantern.config.y > -200
   })
 
   // 仅在聚集数量变化时触发事件
